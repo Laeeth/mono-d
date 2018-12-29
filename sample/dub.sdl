@@ -1,0 +1,7 @@
+name "mono-d-sample"
+description "sample D mono application"
+authors "Laeeth Isharc"
+copyright "Copyright © 2018, Laeeth Isharc"
+license "MIT"
+dependency "mono-host" path="../"
+
