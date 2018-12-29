@@ -26,6 +26,14 @@ T* safeReturn(T)(T* ptr)
     return ptr;
 }
 
+char* toCString(string s)
+{
+	auto arr = new char[s.length+1];
+	foreach(i,c;s)
+		arr[i] = c;
+	arr[s.length] = '\0';
+	return arr.ptr;
+}
 
 string toString(MonoObject* obj)
 {
@@ -393,6 +401,62 @@ string getName(MonoClass* class_)
 	enforce(ret !is null);
 	return ret.fromStringz.idup;
 }
+
+MonoMethod* getMethodFromNameFlags(MonoClass* monoClass, string name, int paramCount, int flags)
+{
+	enforce(monoClass !is null);
+	return safeReturn(mono_class_get_method_from_name_flags(monoClass,name.toStringz,paramCount,flags));
+}
+
+MonoClass*[] getNestedTypes(MonoClass* monoClass)
+{
+	enforce(monoClass  !is null);
+	Appender!(MonoClass*[]) ret;
+	MonoClass* entry;
+	void* p;
+	while( (entry = mono_class_get_nested_types(monoClass,&p)) !is null)
+	{
+		ret.put(entry);
+	}
+	return ret.data;
+}
+
+MonoProperty*[] getProperties(MonoClass* monoClass)
+{
+	enforce(monoClass  !is null);
+	Appender!(MonoProperty*[]) ret;
+	MonoProperty* monoProperty;
+	void* p;
+	while( (monoProperty = mono_class_get_properties(monoClass,&p)) !is null)
+	{
+		ret.put(monoProperty);
+	}
+	return ret.data;
+}
+
+
+MonoProperty* getPropertyFromName(MonoClass* monoClass, string name)
+{
+	enforce(monoClass  !is null);
+	return safeReturn(mono_class_get_property_from_name(monoClass,name.toStringz));
+}
+
+MonoEvent*[] getEvents(MonoClass* monoClass)
+{
+	enforce(monoClass  !is null);
+	Appender!(MonoEvent*[]) ret;
+	MonoEvent* monoEvent;
+	void* p;
+	while( (monoEvent = mono_class_get_events(monoClass,&p)) !is null)
+	{
+		ret.put(monoEvent);
+	}
+	return ret.data;
+}
+
+
+
+
 
 MonoMethod*[] getMethods(MonoObject* obj)
 {
@@ -890,6 +954,7 @@ struct CliClass
         }
     }
 */
+
 	template opDispatch(string method)
 	{
 		template opDispatch(T...)
@@ -1039,20 +1104,177 @@ string[] getAssemblyNamespaces(ref Domain domain)
 }
 
 
+MonoClass* getClass(MonoImage* image, int typeToken)
+{
+	enforce(image !is null);
+	return safeReturn(mono_class_get(image,typeToken));
+}
+
+MonoClass* classFromType(MonoType* monoType)
+{
+	enforce(monoType !is null);
+	return safeReturn(mono_class_from_mono_type(monoType));
+}
+
+
+MonoClass* classFromNameCase(MonoImage* image, string nameSpace, string name) // , ref MonoError error)
+{
+	enforce(image !is null);
+	return safeReturn(mono_class_from_name_case(image,nameSpace.toCString,name.toCString)); // ,&error));
+}
+alias classFromTypeToken = classFromTypeRef;
+MonoClass* classFromTypeRef(MonoImage* image, int typeToken)
+{
+	enforce(image !is null);
+	return safeReturn(mono_class_from_typeref(image,typeToken));
+}
+
+/// mono_class_from_typeref_checked
+
+MonoClass* classFromGenericParameter(MonoGenericParam* param)
+{
+	enforce(param !is null);
+	MonoImage* dummyImage;
+	enum int unusedFlag = 1;
+	return safeReturn(mono_class_from_generic_parameter(param,dummyImage,unusedFlag));
+}
+
+int classArrayElementSize(MonoClass* monoClass)
+{
+	enforce(monoClass !is null);
+	return mono_class_array_element_size(monoClass);
+}
+int classDataSize(MonoClass* monoClass)
+{
+	enforce(monoClass !is null);
+	return mono_class_data_size(monoClass);
+}
+
+MonoType* classEnumBaseType(MonoClass* monoClass)
+{
+	enforce(monoClass !is null);
+	return mono_class_enum_basetype(monoClass);
+}
+
+MonoType* classGetByRefType(MonoClass* monoClass)
+{
+	enforce(monoClass !is null);
+	return safeReturn(mono_class_get_byref_type(monoClass));
+}
+MonoClass* classGetElement(MonoClass* monoClass)
+{
+	enforce(monoClass !is null);
+	return safeReturn(mono_class_get_element_class(monoClass));
+}
+
+int classGetEventToken(MonoEvent* monoEvent)
+{
+	enforce(monoEvent !is null);
+	return mono_class_get_event_token(monoEvent);
+}
+
+MonoClassField* classGetField(MonoClass* monoClass, int fieldToken)
+{
+	enforce(monoClass !is null);
+	return safeReturn(mono_class_get_field(monoClass,fieldToken));
+}
+
+int classGetFieldToken(MonoClassField* monoField)
+{
+	enforce(monoField !is null);
+	return mono_class_get_field_token(monoField);
+}
+
+int classGetFlags(MonoClass* monoClass)
+{
+	enforce(monoClass !is null);
+	return mono_class_get_flags(monoClass);
+}
+
+MonoImage* getImage(MonoClass *monoClass)
+{
+	enforce(monoClass !is null);
+	return safeReturn(mono_class_get_image(monoClass));
+}
+
+MonoClass*[] getInterfaces(MonoClass* monoClass)
+{
+	Appender!(MonoClass*[]) ret;
+	enforce(monoClass !is null);
+	void* p;
+	MonoClass* item;
+	while( (item = mono_class_get_interfaces(monoClass,&p)) !is null)
+	{
+		ret.put(item);
+	}
+	return ret.data;
+}
+
+// If the return is NULL, this indicates that this class is not nested.
+MonoClass* classGetNestingType(MonoClass* monoClass)
+{
+	enforce(monoClass !is null);
+	return mono_class_get_nesting_type(monoClass);
+}
+
+MonoClass* classGetParent(MonoClass* monoClass)
+{
+	enforce(monoClass !is null);
+	return safeReturn(mono_class_get_parent(monoClass));
+}
+
+
 int getFlags(MonoClassField* classField)
 {
 	enforce(classField !is null);
 	return mono_field_get_flags(classField);
 }
 
-MonoObject* mono_field_get_object()
+
+MonoReflectionField* monoFieldGetObject(MonoDomain* domain,MonoClass* monoClass, MonoClassField* monoField)
 {
-	return safeReturn(mono_field_get_object());
+	enforce(domain !is null);
+	enforce(monoClass !is null);
+	enforce(monoField !is null);
+	return safeReturn(mono_field_get_object(domain,monoClass,monoField));
 }
 
 MonoClassField* monoFieldFromToken(MonoImage* image, uint token, MonoClass** retClass, MonoGenericContext* context)
 {
 	return safeReturn(mono_field_from_token(image,token,retClass,context));
+}
+
+string getData(MonoClassField* monoField)
+{
+	enforce(monoField !is null);
+	return safeReturn(mono_field_get_data(monoField)).fromStringz.idup;
+}
+
+int getOffset(MonoClassField* monoField)
+{
+	enforce(monoField !is null);
+	return mono_field_get_offset(monoField);
+}
+
+/// namespace, type name and the field name.
+string fullName(MonoClassField* monoField)
+{
+	enforce(monoField !is null);
+	return safeReturn(mono_field_full_name(monoField)).fromStringz.idup;
+}
+
+bool methodCanAccessField(MonoMethod* method, MonoClassField* monoField)
+{
+	enforce(method !is null);
+	enforce(monoField !is null);
+	return (mono_method_can_access_field(method,monoField)!=0);
+}
+
+bool methodCanAccessMethod(MonoMethod* method, MonoMethod* methodCalled)
+{
+	enforce(method !is null);
+	enforce(methodCalled !is null);
+	return (mono_method_can_access_method(method,methodCalled) !=0);
 }
 
 string getName(MonoProperty* property)
@@ -1128,6 +1350,21 @@ MonoObject* getValueObject(MonoDomain* domain, MonoObject* obj, string fieldName
 	return safeReturn(mono_field_get_value_object(domain,field,obj));
 }
 
+
+MonoClassField*[] getFields(MonoClass* monoClass)
+{
+	Appender!(MonoClassField*[]) ret;
+	void* p;
+	MonoClassField* classField;
+
+	while( (classField = mono_class_get_fields(monoClass,&p)) !is null)
+	{
+		ret.put(classField);
+	}
+	return ret.data;
+}
+
+
 MonoClassField* getField(MonoObject* obj, string fieldName)
 {
 	MonoClass *klass = obj.getClass();
@@ -1195,3 +1432,241 @@ T getAs(T)(MonoObject* obj, MonoClassField* monoField)
 	return ret;
 }
 
+int getPropertyToken(MonoProperty* property)
+{
+	enforce(property !is null);
+	return mono_class_get_property_token(property);
+}
+
+/// arrary rank / number of dimensions
+int getRank(MonoClass* monoClass)
+{
+	return mono_class_get_rank(monoClass);
+}
+
+MonoType* getType(MonoClass* monoClass)
+{
+	enforce(monoClass !is null);
+	return safeReturn(mono_class_get_type(monoClass));
+}
+
+int getTypeToken(MonoClass* monoClass)
+{
+	enforce(monoClass !is null);
+	return mono_class_get_type_token(monoClass);
+}
+
+bool implementsInterface(MonoClass* monoClass, MonoClass* monoInterface)
+{
+	enforce(monoClass !is null);
+	enforce(monoInterface !is null);
+	return (mono_class_implements_interface(monoClass,monoInterface)!=0);
+}
+
+auto inflateGenericMethod(MonoMethod* method, MonoGenericContext* context)
+{
+	enforce(method !is null);
+	enforce(context !is null);
+	return safeReturn(mono_class_inflate_generic_method(method,context));
+}
+
+auto inflateGenericType(MonoType* monoType, MonoGenericContext* context)
+{
+	enforce(monoType !is null);
+	enforce(context !is null);
+	return safeReturn(mono_class_inflate_generic_type(monoType,context));
+}
+
+bool classInit(MonoClass* monoClass)
+{
+	return (mono_class_init(monoClass)!=0);
+}
+
+
+int instanceSize(MonoClass* monoClass)
+{
+	enforce(monoClass !is null);
+	return mono_class_instance_size(monoClass);
+}
+
+bool isAssignableFrom(MonoClass* destClass, MonoClass* sourceClass)
+{
+	enforce(sourceClass !is null);
+	enforce(destClass !is null);
+	return (mono_class_is_assignable_from(destClass,sourceClass)!=0);
+}
+bool isDelegate(MonoClass* monoClass)
+{
+	enforce(monoClass !is null);
+	return (mono_class_is_delegate(monoClass)!=0);
+}
+bool isEnum(MonoClass* monoClass)
+{
+	enforce(monoClass !is null);
+	return (mono_class_is_enum(monoClass)!=0);
+}
+
+/+
+ If the check_interfaces flag is set, then if klassc is an interface this method return TRUE if the
+ klass implements the interface or if klass is an interface, if one of its base classes is klass.
+ If check_interfaces is false then, then if klass is not an interface then it returns TRUE if the klass is a subclass of klassc.
+ if klass is an interface and klassc is System.Object, then this function return true.
++/
+bool isSubClass(MonoClass* possibleSubClass, MonoClass* possibleBaseClass, bool checkInterfaces)
+{
+	enforce(possibleSubClass !is null);
+	enforce(possibleBaseClass !is null);
+	return (mono_class_is_subclass_of(possibleSubClass,possibleBaseClass, checkInterfaces? 1:0)!=0);
+}
+
+
+
+int numEvents(MonoClass* monoClass)
+{
+	enforce(monoClass !is null);
+	return mono_class_num_events(monoClass);
+}
+
+int numFields(MonoClass* monoClass)
+{
+	enforce(monoClass !is null);
+	return mono_class_num_fields(monoClass);
+}
+
+int numMethods(MonoClass* monoClass)
+{
+	enforce(monoClass !is null);
+	return mono_class_num_methods(monoClass);
+}
+
+int numProperties(MonoClass* monoClass)
+{
+	enforce(monoClass !is null);
+	return mono_class_num_properties(monoClass);
+}
+
+
+auto valueSizeAlignment(MonoClass* monoClass)
+{
+	enforce(monoClass !is null);
+	alias Ret = Tuple!(int,"size", uint,"alignment");
+	Ret ret;
+	ret.size = mono_class_value_size(monoClass,&ret.alignment);
+	return ret;
+}
+
+MonoVTable* getVTable(MonoDomain* domain, MonoClass* monoClass)
+{
+	enforce(domain !is null);
+	enforce(monoClass !is null);
+	return safeReturn(mono_class_vtable(domain,monoClass));
+}
+
+bool isValueType(MonoClass* monoClass)
+{
+	enforce(monoClass !is null);
+	return (mono_class_is_valuetype(monoClass)!=0);
+}
+
+int minimumAlignment(MonoClass* monoClass)
+{
+	enforce(monoClass !is null);
+	return mono_class_min_align(monoClass);
+}
+
+string classNameFromToken(MonoImage* image, uint token)
+{
+	enforce(image !is null);
+	return safeReturn(mono_class_name_from_token(image,token)).fromStringz.idup;
+}
+
+
+MonoReflectionEvent* eventGetObject(MonoDomain* domain,MonoClass* monoClass, MonoEvent* monoEvent)
+{
+	enforce(domain !is null);
+	enforce(monoClass !is null);
+	enforce(monoEvent !is null);
+	return safeReturn(mono_event_get_object(domain,monoClass,monoEvent));
+}
+
+
+MonoMethod* eventGetAddMethod(MonoEvent* event)
+{
+	enforce(event !is null);
+	return safeReturn(mono_event_get_add_method(event));
+}
+
+int eventGetFlags(MonoEvent* event)
+{
+	enforce(event !is null);
+	return mono_event_get_flags(event);
+}
+
+string eventGetName(MonoEvent* event)
+{
+	enforce(event !is null);
+	return safeReturn(mono_event_get_name(event)).fromStringz.idup;
+}
+
+MonoClass* eventGetParent(MonoEvent* event)
+{
+	enforce(event !is null);
+	return safeReturn(mono_event_get_parent(event));
+}
+MonoMethod* eventGetRaiseMethod(MonoEvent* event)
+{
+	enforce(event !is null);
+	return safeReturn(mono_event_get_raise_method(event));
+}
+
+MonoMethod* eventGetRemoveMethod(MonoEvent* event)
+{
+	enforce(event !is null);
+	return safeReturn(mono_event_get_remove_method(event));
+}
+
+void* loadRemoteField(MonoObject *thisObj, MonoClass *monoClass, MonoClassField *field, void** res)
+{
+	enforce(thisObj !is null);
+	enforce(monoClass !is null);
+	enforce(field !is null);
+	return safeReturn(mono_load_remote_field(thisObj,monoClass,field,res));
+}
+
+MonoObject* loadRemoteFieldNew(MonoObject* thisObj, MonoClass* monoClass, MonoClassField *field)
+{
+	enforce(thisObj !is null);
+	enforce(monoClass !is null);
+	enforce(field !is null);
+	return safeReturn(mono_load_remote_field_new(thisObj,monoClass,field));
+}
+
+void storeRemoteField(T)(MonoObject *thisObj, MonoClass *monoClass, MonoClassField *field, T value)
+{
+	enforce(thisObj !is null);
+	enforce(monoClass !is null);
+	enforce(field !is null);
+	enforce(arg !is null);
+	mono_store_remote_field(thisObj,monoClass,field,cast(void*)&value);
+}
+
+void storeRemoteFieldNew(T)(MonoObject *thisObj, MonoClass *monoClass, MonoClassField *field, MonoObject *arg)
+{
+	enforce(thisObj !is null);
+	enforce(monoClass !is null);
+	enforce(field !is null);
+	enforce(arg !is null);
+	mono_store_remote_field_new(thisObj,monoClass,field,arg);
+}
+
+MonoMethod* getDelegateBeginInvoke(MonoClass* monoClass)
+{
+	enforce(monoClass !is null);
+	return safeReturn(mono_get_delegate_begin_invoke(monoClass));
+}
+
+MonoMethod* getDelegateEndInvoke(MonoClass* monoClass)
+{
+	enforce(monoClass !is null);
+	return safeReturn(mono_get_delegate_end_invoke(monoClass));
+}
