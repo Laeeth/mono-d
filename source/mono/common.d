@@ -9,12 +9,15 @@ import std.experimental.logger;
 import std.range;
 import std.stdio;
 import std.string;
-import std.traits:ReturnType;
+import std.traits;
 import std.typecons;
+import std.meta:AliasSeq;
 
 import derelict.mono;
 import mono.exceptions;
 import mono.gc;
+
+// 		mono_jit_exec(handle, assembly, 0,null);
 
 T* safeReturn(T)(T* ptr)
 {
@@ -93,7 +96,6 @@ struct Domain
 		this.assembly = openAssembly(filename);
 		this.monoImage = mono_assembly_get_image(this.assembly); //openImage(filename);
 		enforce(this.monoImage !is null);
-		mono_jit_exec(handle, assembly, 0,null);
 		//create_object (handle, this.monoImage);
 	}
 
@@ -493,6 +495,7 @@ string getName(MonoType* type)
 
 
 MonoClass* getClassT(T)()
+if (!isDynamicArray!T)
 {
 	auto id = getId!T;
 	static assert(id in CommonClassMap);
@@ -500,7 +503,7 @@ MonoClass* getClassT(T)()
 }
 
 MonoClass* getClassT(T)()
-if (isArray!T)
+if (isDynamicArray!T)
 {
 	return mono_get_array_class();
 }
@@ -516,13 +519,13 @@ MonoClass* getClassT(T:MonoSByteT)()
 }
 
 MonoClass* getClassT(T)()
-if (isAggregate!T)
+if (is(T==struct) || is(T==class))
 {
 	return mono_get_object_class();
 }
 
 MonoClass* getClassT(T)()
-if (isEnum!T)
+if (is(T==enum))
 {
 	return mono_get_enum_class();
 }
@@ -777,42 +780,12 @@ MonoString* monoString(string s)
 	return safeReturn(mono_string_new(mono_domain_get(),s.toStringz));
 }
 
-	
-MonoClassField* getField(MonoObject* obj, string fieldName)
-{
-	MonoClass *klass = obj.getClass();
-	MonoClassField* field = mono_class_get_field_from_name(klass, fieldName.toStringz);
-	enforce(field !is null);
-	return field;
-}
-
-int getType(MonoClassField* classField)
-{
-	enforce(classField !is null);
-	auto type = mono_field_get_type(classField);
-	enforce (type !is null);
-	return mono_type_get_type(type);
-}
 
 auto getType(MonoType* type)
 {
 	return mono_type_get_type(type);
 }
 
-T get(T)(MonoObject* obj, string fieldName)
-{
-	auto monoField = getField(obj,fieldName);
-	return to!T(obj,monoField);
-}
-
-T to(T)(MonoObject* obj, MonoClassField* monoField)
-{
-	T ret;
-	auto type = monoField.getType();
-	enforce(type == getMonoType!T);
-	mono_field_get_value(obj,monoField,&ret);
-	return ret;
-}
 
 auto getMonoType(T)()
 {
@@ -821,13 +794,6 @@ auto getMonoType(T)()
 	static assert(0);
 }
 
-void set(T)(MonoObject* obj, string field,T val)
-{
-	auto monoField = getMonoField(obj,field);
-	auto type = monoField.getType;
-	enforce(type = getMonoType!T);
-	mono_field_set_value(obj,field.toStringz,&val);	
-}
 
 
 
@@ -892,3 +858,340 @@ string getFilename(MonoImage* image)
 {
 	return safeReturn(mono_image_get_filename(image)).fromStringz.idup;
 }
+
+struct CliClass
+{
+	string name;
+	MonoClass* handle;
+
+	MonoMethod*[string] methodTable;
+
+	this(MonoClass* monoClass)
+	{
+		enforce(monoClass !is null);
+		this.handle = monoClass;
+		this.name = monoClass.getName();
+		auto methods = monoClass.getMethods();
+		tracef("creating %s methods on class %s",methods.length,this.name);
+		foreach(ref method;methods)
+		{
+			auto fullName = format!"%s(%s)"(method.getName,method.getSignatureDescription);
+			methodTable[fullName] = method;
+		}
+		tracef("done");
+	}
+
+/*    template opDispatch(string s) {
+        template opDispatch(TARGS...) {
+            auto opDispatch(ARGS...)(ARGS args) {
+                static if(TARGS.length) return mixin("b." ~ s ~ "!TARGS(args)");
+                else return mixin("b." ~ s ~ "(args)");
+            }
+        }
+    }
+*/
+	template opDispatch(string method)
+	{
+		template opDispatch(T...)
+		{
+			MonoObject* opDispatch(T...)(T args)
+			{
+				tracef("called method %s on %s",method,this.name);
+				MonoObject* exc;
+				auto methodFullName = format!"%s(%s)"(method,methodArgs(args));
+				writefln("method full name is %s",methodFullName);
+				auto p = methodFullName in methodTable;
+				enforce(p !is null,format!"calling %s method on %s class but method is not found: %s"(methodFullName,this.name,this.methodTable.keys));
+				auto methodHandle = *p;
+
+				enforce(*p !is null, format!"missing method calling %s on %s"(methodFullName,this.name));
+				void*[] argsPtr;
+				argsPtr.length = args.length;
+				foreach(i,ref arg;args)
+				{
+					argsPtr[i] = convertToCSharp(&arg);
+				}
+
+				MonoObject* result = mono_runtime_invoke(methodHandle,null,cast(void**) argsPtr.ptr,&exc);
+				//enforce(result !is null, exc.toString());
+				return result;
+			}
+		}
+	}
+
+	MonoObject* invokeObjectMethod(string method,T...)(MonoObject* obj,T args)
+	{
+		tracef("called method %s on %s",method,this.name);
+		MonoObject* exc;
+		auto methodFullName = format!"%s(%s)"(method,methodArgs(args));
+		writefln("method full name is %s",methodFullName);
+		auto p = methodFullName in methodTable;
+		enforce(p !is null,format!"calling %s method on %s class but method is not found: %s"(methodFullName,this.name,this.methodTable.keys));
+		auto methodHandle = *p;
+
+		enforce(*p !is null, format!"missing method calling %s on %s"(methodFullName,this.name));
+		void*[] argsPtr;
+		argsPtr.length = args.length;
+		foreach(i,ref arg;args)
+		{
+			argsPtr[i] = convertToCSharp(&arg);
+		}
+
+		MonoObject* result = mono_runtime_invoke(methodHandle,obj,cast(void**) argsPtr.ptr,&exc);
+		//enforce(result !is null, exc.toString());
+		return result;
+	}
+
+	void createObject(MonoDomain* domain)
+	{
+		mono_object_new(domain,this.handle);
+	}
+}
+
+string methodArgs(T...)(T args)
+{
+	Appender!(string[]) ret;
+	static foreach(A;AliasSeq!T)
+	{
+		enum id = getId!A;
+		enforce(id in CommonClassMap);
+		auto baseTypeString = CommonClassMap[id];
+		auto typeString = baseTypeString
+							.replace("int32","int");
+		ret.put(typeString);
+	}
+	return ret.data.join(",");
+}
+
+void* convertToCSharp(T)(T* arg)
+if (!is(T==string))
+{
+	return cast(void*)arg;
+}
+void* convertToCSharp(string* arg)
+{
+	auto ret = (*arg).monoString();
+	return cast(void*) ret;
+}
+
+struct CliObject
+{
+	MonoObject* handle;
+	CliClass* cliClass;
+
+	this(MonoObject* obj,CliClass* cliClass = null)
+	{
+		enforce(obj !is null);
+		this.cliClass = (cliClass is null) ? new CliClass(obj.getClass()) : cliClass;
+		this.handle = obj;
+		tracef("done object init");
+	}
+
+	template opDispatch(string method)
+	{
+		template opDispatch(T...)
+		{
+			MonoObject* opDispatch(T...)(T args)
+			{
+				tracef("called method %s on object of class %s",method,cliClass.name);
+				return cliClass.invokeObjectMethod!(method)(this.handle,args);
+			}
+		}
+	}
+}
+
+void addInternalCall(F)(string className, string methodName, F funcPtr)
+if (isFunction!F)
+{
+	mono_add_internal_call( format!"%s::%s"(className,methodName).toStringz, funcPtr);
+}
+
+
+void printNameSpaces(ref Domain domain)
+{
+	auto namespaces = domain.getAssemblyNamespaces();
+	foreach(namespace;namespaces)
+		writefln("%s",namespace);
+}
+
+void printClassesFromAssembly(ref Domain domain)
+{
+		auto classes = domain.getAssemblyClassList();
+		foreach(class_;classes)
+		writefln("%s/%s",class_.getNameSpace,class_.getName);	
+}
+
+void printMethodsOfClass(ref Domain domain, string nameSpace, string className)
+{
+		auto methods = domain.getMethods(nameSpace,className);
+		foreach(method;methods)
+			writefln("%s::%s %s -> %s",className,method.getName(),method.getSignatureDescription,method.getReturnType.getName());
+}
+
+string[] getAssemblyClassNames(ref Domain domain)
+{
+	return domain.getAssemblyClassList.map!(c => c.getName).array;
+}
+
+string[] getAssemblyNamespaces(ref Domain domain)
+{
+	return domain.getAssemblyClassList.map!(c => c.getNameSpace).array.sort.uniq.array;
+}
+
+
+int getFlags(MonoClassField* classField)
+{
+	enforce(classField !is null);
+	return mono_field_get_flags(classField);
+}
+
+MonoObject* mono_field_get_object()
+{
+	return safeReturn(mono_field_get_object());
+}
+
+MonoClassField* monoFieldFromToken(MonoImage* image, uint token, MonoClass** retClass, MonoGenericContext* context)
+{
+	return safeReturn(mono_field_from_token(image,token,retClass,context));
+}
+
+string getName(MonoProperty* property)
+{
+	enforce(property !is null);
+	return safeReturn(mono_property_get_name(property)).fromStringz.idup;
+}
+
+MonoClass* getParent(MonoProperty* property)
+{
+	enforce(property !is null);
+	return safeReturn(mono_property_get_parent(property));
+}
+
+MonoMethod*  getGetMethod(MonoProperty* property)
+{
+	enforce(property !is null);
+	return safeReturn(mono_property_get_get_method(property));
+}
+
+MonoMethod* getSetMethod(MonoProperty* property)
+{
+	enforce(property !is null);
+	return safeReturn(mono_property_get_set_method(property));
+}
+
+// missing C binding I think
+version(None)
+{
+	MonoReflectionProperty* getObjectChecked(MonoDomain* domain, MonoClass* monoClass, MonoProperty* property, MonoError* error)
+	{
+		enforce(domain !is null);
+		enforce(monoClass !is null);
+		enforce(property !is null);
+		return safeReturn(mono_property_get_object_checked(domain,monoClass,property,error));
+	}
+}
+int getFlags(MonoProperty* property)
+{
+	enforce(property !is null);
+	return mono_property_get_flags(property);
+}
+MonoObject* getValue(MonoProperty *property, void *obj, void **params, MonoObject **exc)
+{
+	enforce(property !is null);
+	enforce(obj !is null);
+	enforce(params !is null);
+	return safeReturn(mono_property_get_value(property,obj,params,exc));
+}
+
+void setValue(MonoProperty *property, void *obj, void **params, MonoObject **exc)
+{
+	enforce(property !is null);
+	enforce(obj !is null);
+	enforce(params !is null);
+	mono_property_set_value(property,obj,params,exc);
+}
+
+T getValue(T)(MonoObject* obj, string fieldName)
+{
+	enforce(obj !is null);
+	auto field = getField(obj,fieldName);
+	T ret;
+	mono_field_get_value(obj,field,cast(void*)&ret);
+	return ret;
+}
+	
+MonoObject* getValueObject(MonoDomain* domain, MonoObject* obj, string fieldName)
+{
+	enforce(domain !is null);
+	enforce(obj !is null);
+	auto field = getField(obj,fieldName);
+	return safeReturn(mono_field_get_value_object(domain,field,obj));
+}
+
+MonoClassField* getField(MonoObject* obj, string fieldName)
+{
+	MonoClass *klass = obj.getClass();
+	MonoClassField* field = mono_class_get_field_from_name(klass, fieldName.toStringz);
+	enforce(field !is null);
+	return field;
+}
+
+void setValue(T)(MonoObject* obj, string fieldName,T val)
+{
+	auto field = getField(obj,fieldName);
+	auto type = field.getType;
+	enforce(type == getMonoType!T);
+	mono_field_set_value(obj,field.toStringz,&val); 
+}
+
+T getValue(T)(MonoVTable* vt, string fieldName)
+{
+	enforce(vt !is null);
+	auto field = getField(obj,fieldName);
+	T ret;
+	mono_field_static_get_value(vt,field,&ret);
+	return ret;
+}
+
+void setValue(T)(MonoVTable* vt, string fieldName, T value)
+{
+	enforce(vt !is null);
+	auto field = getField(obj,fieldName);
+	mono_field_static_set_value(vt,field,cast(void*)&value);
+}
+
+string getName(MonoClassField* classField)
+{
+	enforce(classField !is null);
+	return safeReturn(mono_field_get_name(classField)).fromStringz.idup;
+}
+
+MonoClass* getParent(MonoClassField* classField)
+{
+	enforce(classField !is null);
+	return safeReturn(mono_field_get_parent(classField));
+}
+
+int getType(MonoClassField* classField)
+{
+	enforce(classField !is null);
+	auto type = mono_field_get_type(classField);
+	enforce (type !is null);
+	return mono_type_get_type(type);
+}
+
+T getAs(T)(MonoObject* obj, string fieldName)
+{
+	auto monoField = getField(obj,fieldName);
+	return getAs!T(obj,monoField);
+}
+
+T getAs(T)(MonoObject* obj, MonoClassField* monoField)
+{
+	T ret;
+	auto type = monoField.getType();
+	enforce(type == getMonoType!T);
+	mono_field_get_value(obj,monoField,&ret);
+	return ret;
+}
+
