@@ -1670,3 +1670,58 @@ MonoMethod* getDelegateEndInvoke(MonoClass* monoClass)
 	enforce(monoClass !is null);
 	return safeReturn(mono_get_delegate_end_invoke(monoClass));
 }
+/+
+    MonoArray* mono_array_new (MonoDomain *domain, MonoClass *eclass, uintptr_t n);
+    MonoArray* mono_array_new_full (MonoDomain *domain, MonoClass *array_class, uintptr_t *lengths, intptr_t *lower_bounds);
+    MonoArray* mono_array_new_specific (MonoVTable *vtable, uintptr_t n);
++/
+
+MonoClass* arrayClassGetRank(MonoClass* eClass, uint rank)
+{
+	enforce(eClass !is null);
+	return safeReturn(mono_array_class_get(eClass,rank));
+}
+
+size_t sizeOfElement(MonoClass* arrayClass)
+{
+	enforce(arrayClass !is null);
+	return cast(int) mono_array_element_size(arrayClass);
+}
+
+
+void opAssign(size_t index,T)(MonoArray* dest, T value)
+{
+    mono_value_copy_array(dest, cast(int) index, &value, 1);
+}
+
+void opIndexAssign(size_t fromIndex,size_t toIndex,T)(MonoArray* dest, T[] values)
+{
+    mono_value_copy_array(dest, cast(int) index, values.ptr, cast(int)toIndex - fromIndex);
+}
+
+MonoObject* monoArray(T)(MonoDomain* domain, size_t size)
+{
+	auto type = getMonoType!T;
+	return mono_array_new(domain,type,size);
+}
+
+MonoArray* arrayDup(MonoArray* array)
+{
+	enforce(array !is null);
+	return safeReturn(mono_array_clone(array));
+}
+size_t length(MonoArray* array)
+{
+	return cast(long)mono_array_length(array);
+}
+MonoArray* makeArray(MonoDomain* domain, MonoClass* monoClass, ulong numElements)
+{
+	return safeReturn(mono_array_new(domain,monoClass,numElements));
+}
+/+
+T opIndex(MonoArray monoArray,size_t index)
+{
+	     char* mono_array_addr_with_size (MonoArray *array, int size, uintptr_t idx);
+
+}
++/
